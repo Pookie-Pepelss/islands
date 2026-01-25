@@ -316,6 +316,7 @@ local VENDING_MODE = getNetRemote("deGzdggahhjo/rLPziSaNkyol")
 local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
 local CLIENT_EAT_FOOD = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
 local FETCH_ONLINE_ISLANDS = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("FETCH_ONLINE_ISLANDS")
+local SHOOT_REMOTE = getNetRemote("fLafXsVXagmlXhlc/rlswbitpeuLwaYyXTin")
 
 local function GetBackpackItems()
 	local items = {}
@@ -1565,6 +1566,71 @@ MiscTab:CreateToggle({
 	end,
 })
 
+local spamBowEnabled = false
+local spamBowThread = nil
+local spamBowDelay = 0.1
+
+MiscTab:CreateToggle({
+	Name = "Spam Bow (Hold Bow)",
+	CurrentValue = false,
+	Flag = "SpamBowToggle",
+	Callback = function(Value)
+		spamBowEnabled = Value
+		if spamBowEnabled then
+			spamBowThread = task.spawn(function()
+				while spamBowEnabled do
+					pcall(function()
+						local char = LP.Character
+						if char then
+							local tool = char:FindFirstChildWhichIsA("Tool")
+							if tool and (tool.Name:lower():find("bow") or tool.Name:lower():find("crossbow")) then
+								local mouse = LP:GetMouse()
+								local startPos = char.Head.Position
+								local targetPos = mouse.Hit.Position
+								local direction = (targetPos - startPos).Unit
+								
+								local args = {
+									HS:GenerateGUID(false),
+									{
+										{
+											charge = 1,
+											time = workspace:GetServerTimeNow(),
+											bow = tool,
+											direction = direction,
+											arrowName = "arrow1",
+											zkPhNEfenvrvyfjtngsdjEZ = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\ngkbrvenfosed"
+										}
+									}
+								}
+								SHOOT_REMOTE:FireServer(unpack(args))
+							end
+						end
+					end)
+					task.wait(spamBowDelay)
+				end
+			end)
+			registerLoop(spamBowThread)
+		else
+			if spamBowThread then
+				task.cancel(spamBowThread)
+				spamBowThread = nil
+			end
+		end
+	end,
+})
+
+MiscTab:CreateSlider({
+	Name = "Bow Spam Delay",
+	Range = {0.1, 1},
+	Increment = 0.01,
+	Suffix = " seconds",
+	CurrentValue = 0.1,
+	Flag = "BowSpamDelaySlider",
+	Callback = function(Value)
+		spamBowDelay = Value
+	end,
+})
+
 local FoodAutomationSection = MiscTab:CreateSection("Food Automation")
 
 local eatLoopEnabled = false
@@ -1616,18 +1682,6 @@ MiscTab:CreateSlider({
 
 local UICustomizationSection = MiscTab:CreateSection("UI Customization")
 
-MiscTab:CreateToggle({
-	Name = "Hardcore Mode UI",
-	CurrentValue = false,
-	Flag = "HardcoreModeToggle",
-	Callback = function(Value)
-		local hc = LP:FindFirstChild("HardcoreMode")
-		if hc then
-			hc.Value = Value
-		end
-	end,
-})
-
 MiscTab:CreateInput({
 	Name = "Join Code Spoofer",
 	CurrentValue = "",
@@ -1638,6 +1692,18 @@ MiscTab:CreateInput({
 		local jc = LP:FindFirstChild("JoinCode")
 		if jc then
 			jc.Value = Text
+		end
+	end,
+})
+
+MiscTab:CreateToggle({
+	Name = "Hardcore Mode UI",
+	CurrentValue = false,
+	Flag = "HardcoreModeToggle",
+	Callback = function(Value)
+		local hc = LP:FindFirstChild("HardcoreMode")
+		if hc then
+			hc.Value = Value
 		end
 	end,
 })
