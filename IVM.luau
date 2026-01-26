@@ -91,7 +91,6 @@ local Window = Rayfield:CreateWindow({
 
 local VendingTab = Window:CreateTab("Vending Managment", 6942650339)
 local OpeningTab = Window:CreateTab("Opening", 78111289121317)
-local MovementTab = Window:CreateTab("Movement", 9657060536)
 local MiscTab = Window:CreateTab("Misc", 136882854117051)
 local SettingsTab = Window:CreateTab("Settings", 7059346373)
 
@@ -315,8 +314,6 @@ local VENDING_CLOSE = getNetRemote("deGzdggahhjo/QaardducNrilqsmxdiotkewau")
 local VENDING_MODE = getNetRemote("deGzdggahhjo/rLPziSaNkyol")
 local CLIENT_REQUEST_22 = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_22")
 local CLIENT_EAT_FOOD = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("CLIENT_EAT_FOOD")
-local FETCH_ONLINE_ISLANDS = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("FETCH_ONLINE_ISLANDS")
-local SHOOT_REMOTE = getNetRemote("fLafXsVXagmlXhlc/rlswbitpeuLwaYyXTin")
 
 local function GetBackpackItems()
 	local items = {}
@@ -1450,97 +1447,6 @@ registerConnection(RunS.Heartbeat:Connect(function(deltaTime)
 	end
 end))
 
-local MovementSection = MovementTab:CreateSection("Movement")
-
-local flyEnabled = false
-local flySpeed = 20
-local flyBodyGyro = nil
-
-local function stopFly()
-	if flyBodyVelocity then flyBodyVelocity:Destroy() flyBodyVelocity = nil end
-	if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
-	local char = LP.Character
-	if char and char:FindFirstChild("Humanoid") then
-		char.Humanoid.PlatformStand = false
-	end
-end
-
-local function startFly()
-	stopFly()
-	local char = LP.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
-	
-	local hum = char:FindFirstChild("Humanoid")
-	if hum then hum.PlatformStand = true end
-
-	flyBodyVelocity = Instance.new("BodyVelocity", hrp)
-	flyBodyVelocity.Velocity = Vector3.new(0,0,0)
-	flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-
-	flyBodyGyro = Instance.new("BodyGyro", hrp)
-	flyBodyGyro.P = 9e4
-	flyBodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-	flyBodyGyro.CFrame = hrp.CFrame
-end
-
-MovementTab:CreateToggle({
-	Name = "Fly",
-	CurrentValue = false,
-	Flag = "FlyToggle",
-	Callback = function(Value)
-		flyEnabled = Value
-		if flyEnabled then
-			startFly()
-		else
-			stopFly()
-		end
-	end,
-})
-
-registerConnection(RunS.RenderStepped:Connect(function()
-	if not flyEnabled then return end
-	local char = LP.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not flyBodyVelocity or not flyBodyGyro then 
-		if flyEnabled and hrp then startFly() end
-		return 
-	end
-	
-	local cam = workspace.CurrentCamera
-	local moveDir = Vector3.new()
-	
-	if UIS:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + cam.CFrame.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - cam.CFrame.LookVector end
-	if UIS:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + cam.CFrame.RightVector end
-	if UIS:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - cam.CFrame.RightVector end
-	if UIS:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
-	if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then moveDir = moveDir - Vector3.new(0, 1, 0) end
-	
-	flyBodyVelocity.Velocity = moveDir * flySpeed
-	flyBodyGyro.CFrame = cam.CFrame
-end))
-
-local infJump = false
-MovementTab:CreateToggle({
-	Name = "Infinite Jump",
-	CurrentValue = false,
-	Flag = "InfJumpToggle",
-	Callback = function(Value)
-		infJump = Value
-	end,
-})
-
-registerConnection(UIS.JumpRequest:Connect(function()
-	if infJump then
-		local char = LP.Character
-		local hum = char and char:FindFirstChild("Humanoid")
-		if hum then
-			hum:ChangeState(Enum.HumanoidStateType.Jumping)
-		end
-	end
-end))
-
 local CombatSection = MiscTab:CreateSection("Combat")
 
 local noAimingSlowLoop = nil
@@ -1563,71 +1469,6 @@ MiscTab:CreateToggle({
 				noAimingSlowLoop = nil
 			end
 		end
-	end,
-})
-
-local spamBowEnabled = false
-local spamBowThread = nil
-local spamBowDelay = 0.1
-
-MiscTab:CreateToggle({
-	Name = "Spam Bow (Hold Bow)",
-	CurrentValue = false,
-	Flag = "SpamBowToggle",
-	Callback = function(Value)
-		spamBowEnabled = Value
-		if spamBowEnabled then
-			spamBowThread = task.spawn(function()
-				while spamBowEnabled do
-					pcall(function()
-						local char = LP.Character
-						if char then
-							local tool = char:FindFirstChildWhichIsA("Tool")
-							if tool and (tool.Name:lower():find("bow") or tool.Name:lower():find("crossbow")) then
-								local mouse = LP:GetMouse()
-								local startPos = char.Head.Position
-								local targetPos = mouse.Hit.Position
-								local direction = (targetPos - startPos).Unit
-								
-								local args = {
-									HS:GenerateGUID(false),
-									{
-										{
-											charge = 1,
-											time = workspace:GetServerTimeNow(),
-											bow = tool,
-											direction = direction,
-											arrowName = "arrow1",
-											zkPhNEfenvrvyfjtngsdjEZ = "\a\240\159\164\163\240\159\164\161\a\n\a\n\a\ngkbrvenfosed"
-										}
-									}
-								}
-								SHOOT_REMOTE:FireServer(unpack(args))
-							end
-						end
-					end)
-					task.wait(spamBowDelay)
-				end
-			end)
-			registerLoop(spamBowThread)
-		else
-			if spamBowThread then
-				task.cancel(spamBowThread)
-				spamBowThread = nil
-			end
-		end
-	end,
-})
-
-MiscTab:CreateSlider({
-	Name = "Bow Spam Delay",
-	Range = {0.1, 1},
-	Increment = 0.01,
-	Suffix = " seconds",
-	CurrentValue = 0.1,
-	Flag = "BowSpamDelaySlider",
-	Callback = function(Value)
-		spamBowDelay = Value
 	end,
 })
 
@@ -1705,15 +1546,6 @@ MiscTab:CreateToggle({
 		if hc then
 			hc.Value = Value
 		end
-	end,
-})
-
-MiscTab:CreateButton({
-	Name = "Fix PI List",
-	Callback = function()
-		pcall(function()
-			FETCH_ONLINE_ISLANDS:InvokeServer()
-		end)
 	end,
 })
 
@@ -2306,6 +2138,46 @@ local SetSeasonButton = SettingsTab:CreateButton({
 	end,
 })
 
+local originalPerformanceSettings = nil
+SettingsTab:CreateToggle({
+	Name = "Performance Mode",
+	CurrentValue = false,
+	Flag = "PerformanceModeToggle",
+	Callback = function(Value)
+		local Lighting = game:GetService("Lighting")
+		if Value then
+			if not originalPerformanceSettings then
+				originalPerformanceSettings = {
+					GlobalShadows = Lighting.GlobalShadows,
+					Technology = Lighting.Technology,
+					QualityLevel = settings().Rendering.QualityLevel,
+				}
+			end
+
+			pcall(function() Lighting.GlobalShadows = false end)
+			pcall(function() Lighting.Technology = Enum.Technology.Compatibility end)
+			pcall(function() settings().Rendering.QualityLevel = 1 end)
+			for _, v in ipairs(workspace:GetDescendants()) do
+				if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+					v.Enabled = false
+				end
+			end
+		else
+			if originalPerformanceSettings then
+				pcall(function() Lighting.GlobalShadows = originalPerformanceSettings.GlobalShadows end)
+				pcall(function() Lighting.Technology = originalPerformanceSettings.Technology end)
+				pcall(function() settings().Rendering.QualityLevel = originalPerformanceSettings.QualityLevel end)
+				for _, v in ipairs(workspace:GetDescendants()) do
+					if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+						v.Enabled = true
+					end
+				end
+				originalPerformanceSettings = nil
+			end
+		end
+	end,
+})
+
 local SettingsSection = SettingsTab:CreateSection("Danger Zone")
 
 _G.VendingManagerCleanup = function()
@@ -2331,7 +2203,6 @@ _G.VendingManagerCleanup = function()
 	pcall(function() loopItemEnabled = false end)
 	pcall(function() openingEnabled = false end)
 	pcall(function() espScannerActive = false end)
-	pcall(function() if stopFly then stopFly() end end)
 
 	pcall(function()
 		if CircleLines and type(CircleLines) == "table" then
