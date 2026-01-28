@@ -40,6 +40,7 @@ local openingEnabled = openingEnabled or false
 local loopCoinEnabled = loopCoinEnabled or false
 local loopItemEnabled = loopItemEnabled or false
 local atmLoopEnabled = false
+local isCleaningUp = false
 releaseLabel = releaseLabel or function(lab) if lab and type(lab.Remove) == "function" then lab:Remove() end end
 UpdateDropdown = UpdateDropdown or function() end
 
@@ -74,8 +75,8 @@ local Window = Rayfield:CreateWindow({
       FileName = "VendingSettings"
    },
    Discord = {
-      Enabled = false,
-      Invite = "noinvitelink",
+      Enabled = true,
+      Invite = "QZWrvrqkwb",
       RememberJoins = true
    },
    KeySystem = false,
@@ -89,6 +90,19 @@ local Window = Rayfield:CreateWindow({
       Key = {"Hello"}
    }
 })
+
+-- Open Discord Invite
+task.spawn(function()
+	local invite_code = Window.Discord.Invite
+	local success, err = pcall(function()
+		if openurl then
+			openurl("https://discord.gg/" .. invite_code)
+		end
+	end)
+	if not success then
+		print("Please join our discord: https://discord.gg/" .. invite_code)
+	end
+end)
 
 local VendingTab = Window:CreateTab("Vending Managment", 6942650339)
 local ATMTab = Window:CreateTab("ATM", 14832381261)
@@ -528,10 +542,9 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 		return
 	end
 	coinActionInProgress = true
-	local ok, err = pcall(function()
-		local queue = {}
-		local sortedVendings = getSortedVendingsInRadius()
-		for _, v in ipairs(sortedVendings) do
+	local queue = {}
+	local sortedVendings = getSortedVendingsInRadius()
+	for _, v in ipairs(sortedVendings) do
 			if loopGen and loopGen ~= coinLoopGeneration then return end
 			table.insert(queue, v)
 			local coinBalance = v:FindFirstChild("CoinBalance")
@@ -540,13 +553,13 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 			end
 			if #queue >= maxVendingsPerCycle then break end
 		end
-
-		if #queue == 0 then return end
-
-		local processed = 0
-		local active = 0
-		local maxAttempts = 50
-
+	if #queue == 0 then
+		coinActionInProgress = false
+		return
+	end
+	local processed = 0
+	local active = 0
+	local maxAttempts = 50
 		for _, v in ipairs(queue) do
 			if loopGen and loopGen ~= coinLoopGeneration then break end
 			active = active + 1
@@ -626,11 +639,7 @@ local function withdrawVendingsCoinsInRadius(amount, showNotif, singleTransactio
 			if loopGen and loopGen ~= coinLoopGeneration then break end
 			task.wait(0.05)
 		end
-
-	end)
 	coinActionInProgress = false
-	if not ok then
-	end
 end
 local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 	if showNotif == nil then showNotif = true end
@@ -751,10 +760,8 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 	if loopGen and loopGen ~= coinLoopGeneration then return end
 	if coinActionInProgress then return end
 	coinActionInProgress = true
-	local ok, err = pcall(function()
-		local processed = 0
-		local MAX_VENDING_CAPACITY = 5_000_000_000
-
+	local processed = 0
+	local MAX_VENDING_CAPACITY = 5_000_000_000
 	local queue = {}
 	local sortedVendings = getSortedVendingsInRadius()
 	for _, v in ipairs(sortedVendings) do
@@ -762,9 +769,7 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 		table.insert(queue, v)
 		if #queue >= maxVendingsPerCycle then break end
 	end
-
 	if #queue == 0 then coinActionInProgress = false return end
-
 	local function processVending(v)
 		if loopGen and loopGen ~= coinLoopGeneration then return false end
 		local guid = HS:GenerateGUID(false)
@@ -906,14 +911,9 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 			if idx > #queue then break end
 			task.wait(0.05)
 		end
-
 		task.wait(0.2)
 	end
-
-	end)
 	coinActionInProgress = false
-	if not ok then
-	end
 end
 
 local function withdrawVendingsCoinsSimple(amount, showNotif)
@@ -2006,7 +2006,7 @@ local function getVendingMachineAtMouse()
 					tmax = math.min(tmax, t2)
 				elseif rayOrig < minBounds[axis] or rayOrig > maxBounds[axis] then
 					hit = false
-					return
+					break
 				end
 			end
 			
@@ -2087,9 +2087,7 @@ SettingsTab:CreateSlider({
 	Flag = "MaxESPLabelsSlider",
 	Callback = function(Value)
 		MAX_ESP_LABELS = math.max(0, math.floor(Value))
-		if type(enforceMaxEsp) == "function" then
-			pcall(function() enforceMaxEsp() end)
-		end
+		enforceMaxEsp()
 	end,
 })
 
@@ -2119,11 +2117,11 @@ SettingsTab:CreateToggle({
 		if Value then
 			vendingRadius = 10000
 			CircleRadius = 10000
-			pcall(function() VendingRadiusSlider:Disable() end)
+			VendingRadiusSlider:Disable()
 		else
 			vendingRadius = 15
 			CircleRadius = 15
-			pcall(function() VendingRadiusSlider:Enable() end)
+			VendingRadiusSlider:Enable()
 		end
 	end,
 })
@@ -2232,9 +2230,9 @@ SettingsTab:CreateToggle({
 				}
 			end
 
-			pcall(function() Lighting.GlobalShadows = false end)
-			pcall(function() Lighting.Technology = Enum.Technology.Compatibility end)
-			pcall(function() settings().Rendering.QualityLevel = 1 end)
+			Lighting.GlobalShadows = false
+			Lighting.Technology = Enum.Technology.Compatibility
+			settings().Rendering.QualityLevel = 1
 			for _, v in ipairs(workspace:GetDescendants()) do
 				if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
 					v.Enabled = false
@@ -2242,9 +2240,9 @@ SettingsTab:CreateToggle({
 			end
 		else
 			if originalPerformanceSettings then
-				pcall(function() Lighting.GlobalShadows = originalPerformanceSettings.GlobalShadows end)
-				pcall(function() Lighting.Technology = originalPerformanceSettings.Technology end)
-				pcall(function() settings().Rendering.QualityLevel = originalPerformanceSettings.QualityLevel end)
+				Lighting.GlobalShadows = originalPerformanceSettings.GlobalShadows
+				Lighting.Technology = originalPerformanceSettings.Technology
+				settings().Rendering.QualityLevel = originalPerformanceSettings.QualityLevel
 				for _, v in ipairs(workspace:GetDescendants()) do
 					if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Beam") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
 						v.Enabled = true
@@ -2259,6 +2257,9 @@ SettingsTab:CreateToggle({
 local SettingsSection = SettingsTab:CreateSection("Danger Zone")
 
 _G.VendingManagerCleanup = function()
+	if isCleaningUp then return end
+	isCleaningUp = true
+
 	for _, connection in ipairs(activeConnections) do
 		pcall(function()
 			if connection and type(connection.Disconnect) == "function" then
@@ -2275,44 +2276,35 @@ _G.VendingManagerCleanup = function()
 	end
 	activeLoops = {}
 
-	pcall(function() if itemLoopThread then task.cancel(itemLoopThread) itemLoopThread = nil end end)
-	pcall(function() if coinLoopThread then task.cancel(coinLoopThread) coinLoopThread = nil end end)
-	pcall(function() if instantPromptsLoop then task.cancel(instantPromptsLoop) instantPromptsLoop = nil end end)
-	pcall(function() loopCoinEnabled = false end)
-	pcall(function() loopItemEnabled = false end)
-	pcall(function() instantPromptsEnabled = false end)
-	pcall(function() openingEnabled = false end)
-	pcall(function() espScannerActive = false end)
+	loopCoinEnabled = false
+	loopItemEnabled = false
+	openingEnabled = false
+	atmLoopEnabled = false
+	espScannerActive = false
 
-	pcall(function()
-		if CircleLines and type(CircleLines) == "table" then
-			for _, line in ipairs(CircleLines) do pcall(function() if line and type(line.Remove) == "function" then line:Remove() end end) end
-		end
-		CircleLines = {}
-	end)
+	if CircleLines and type(CircleLines) == "table" then
+		for _, line in ipairs(CircleLines) do pcall(function() if line and type(line.Remove) == "function" then line:Remove() end end) end
+	end
+	CircleLines = {}
 
-	pcall(function()
-		if selectionBoxLines and type(selectionBoxLines) == "table" then
-			for _, lines in pairs(selectionBoxLines) do
-				for _, line in ipairs(lines) do pcall(function() if line and type(line.Remove) == "function" then line:Remove() end end) end
-			end
+	if selectionBoxLines and type(selectionBoxLines) == "table" then
+		for _, lines in pairs(selectionBoxLines) do
+			for _, line in ipairs(lines) do pcall(function() if line and type(line.Remove) == "function" then line:Remove() end end) end
 		end
-		selectionBoxLines = {}
-		selectedVendingMachines = {}
-		vendingBoundingBoxCache = {}
-	end)
+	end
+	selectionBoxLines = {}
+	selectedVendingMachines = {}
+	vendingBoundingBoxCache = {}
 
-	pcall(function()
-		if espLabels and type(espLabels) == "table" then
-			for _, data in pairs(espLabels) do pcall(function() if data and data.label and type(data.label.Remove) == "function" then data.label:Remove() end end) end
-		end
-		espLabels = {}
-		espCache = {}
-		if labelPool and type(labelPool) == "table" then
-			for _, lab in ipairs(labelPool) do pcall(function() if lab and type(lab.Remove) == "function" then lab:Remove() end end) end
-		end
-		labelPool = {}
-	end)
+	if espLabels and type(espLabels) == "table" then
+		for _, data in pairs(espLabels) do pcall(function() if data and data.label and type(data.label.Remove) == "function" then data.label:Remove() end end) end
+	end
+	espLabels = {}
+	espCache = {}
+	if labelPool and type(labelPool) == "table" then
+		for _, lab in ipairs(labelPool) do pcall(function() if lab and type(lab.Remove) == "function" then lab:Remove() end end) end
+	end
+	labelPool = {}
 	
 	pcall(function()
 		local c = game:GetService("CoreGui"):FindFirstChild("VendingMachineListUI")
@@ -2325,9 +2317,20 @@ _G.VendingManagerCleanup = function()
 
 	pcall(function() if Window and type(Window.Destroy) == "function" then Window:Destroy() end end)
 	pcall(function() if Rayfield and type(Rayfield.Destroy) == "function" then Rayfield:Destroy() end end)
-	pcall(function() Window = nil Rayfield = nil end)
+	Window, Rayfield = nil, nil
 
 	_G.VendingManagerCleanup = nil
+end
+
+if Window and type(Window.Destroy) == "function" then
+	local oldDestroy = Window.Destroy
+	Window.Destroy = function(self, ...)
+		if not isCleaningUp and _G.VendingManagerCleanup then
+			pcall(_G.VendingManagerCleanup)
+		else
+			return oldDestroy(self, ...)
+		end
+	end
 end
 
 registerConnection(LP.OnTeleport:Connect(function()
@@ -2339,11 +2342,8 @@ end))
 SettingsTab:CreateButton({
 	Name = "Unload Script",
 	Callback = function()
-			pcall(function()
-				if _G.VendingManagerCleanup then
-					pcall(_G.VendingManagerCleanup)
-				end
-				Rayfield:Notify({Title = "Unload", Content = "Unload complete.", Duration = 2, Image = 11401835376})
-			end)
-		end,
-	})
+		if _G.VendingManagerCleanup then
+			_G.VendingManagerCleanup()
+		end
+	end,
+})
