@@ -95,6 +95,7 @@ espLabels = espLabels or {}
 espCache = espCache or {}
 selectionBoxLines = selectionBoxLines or {}
 selectedVendingMachines = selectedVendingMachines or {}
+setmetatable(selectedVendingMachines, {__mode = "k"})
 CircleLines = CircleLines or {}
 
 local openingEnabled = openingEnabled or false
@@ -177,7 +178,7 @@ local selectionBoxUpdateRate = 2
 local maxSelectionBoxes = 20
 local maxVendingsPerCycle = 20
 
-local vendingBoundingBoxCache = {}
+local vendingBoundingBoxCache = setmetatable({}, {__mode = "k"})
 local targetVendingMode = "All"
 local selectedVendMode = 0
 local ItemMode = nil
@@ -949,7 +950,6 @@ local function depositCoinsIntoVending(depositAmount, showNotif, singleTransacti
 end
 
 	local function setPriceInRadius(amount)
-		if not amount or type(amount) ~= "number" or amount <= 0 then return end
 		local processed = 0
 		local sortedVendings = getSortedVendingsInRadius()
 		for _, v in ipairs(sortedVendings) do
@@ -961,21 +961,33 @@ end
 				task.wait(0.001)
 				task.wait(0.001)
 			
-				VENDING_MODE:FireServer(guid, {{
-					mode = selectedVendMode,
-					vendingMachine = v,
-					player_tracking_category = "join_from_web",
-					transactionPrice = amount,
-				}})
+				local finalPrice = amount
+				if not finalPrice then
+					finalPrice = v:GetAttribute("Price") or v:GetAttribute("TransactionPrice")
+					if not finalPrice then
+						local pVal = v:FindFirstChild("Price") or v:FindFirstChild("TransactionPrice")
+						if pVal then finalPrice = pVal.Value end
+					end
+				end
+
+				if finalPrice then
+					VENDING_MODE:FireServer(guid, {{
+						mode = selectedVendMode,
+						vendingMachine = v,
+						player_tracking_category = "join_from_web",
+						transactionPrice = finalPrice,
+					}})
+					processed = processed + 1
+				end
 			
 				closeVendingSession(v)
-				processed = processed + 1
 				task.wait(0.001)
 		end
 
 		if processed > 0 then
+			local actionText = amount and "Price Set" or "Mode Set"
 			local selectionInfo = selectionModeEnabled and " (selected)" or ""
-			Rayfield:Notify({Title = "Price Set" .. selectionInfo, Content = "Set price for " .. processed .. " machine(s)", Duration = 2, Image = 11401835376})
+			Rayfield:Notify({Title = actionText .. selectionInfo, Content = "Updated " .. processed .. " machine(s)", Duration = 2, Image = 11401835376})
 		end
 	end
 
@@ -1239,9 +1251,7 @@ local PriceInput = VendingTab:CreateInput({
 local SetPriceButton = VendingTab:CreateButton({
 	Name = "Set Price For Vending Machines (Radius)",
 	Callback = function()
-		if PriceInputValue == "" or PriceInputValue == nil then return end
 		local amount = parseAmount(PriceInputValue)
-		if not amount or amount <= 0 then return end
 		setPriceInRadius(amount)
 	end,
 })
@@ -1803,7 +1813,7 @@ local ChestOpenerSection = OpeningTab:CreateSection("Chest/Cauldron Opener")
 local chestOpenerEnabled = false
 local chestWalkEnabled = false
 local selectedOpenerType = "All"
-local openerTypes = {"All", "Cauldron", "Treasure Chest", "Dungeon Chest"}
+local openerTypes = {"All", "Cauldron", "Treasure Chest", "Dungeon Chest", "Serpent Egg", "Dragon Egg"}
 local openerLoopThread = nil
 
 OpeningTab:CreateDropdown({
@@ -1841,7 +1851,7 @@ OpeningTab:CreateToggle({
 											local name = v.Name
 											local isMatch = false
 											if selectedOpenerType == "All" then
-												if name:find("cauldron") or name:find("treasureChest") or name:find("dungeonChest") then
+												if name:find("cauldron") or name:find("treasureChest") or name:find("dungeonChest") or name:find("serpentEgg") or name:find("dragonEgg") then
 													isMatch = true
 												end
 											elseif selectedOpenerType == "Cauldron" and name:find("cauldron") then
@@ -1849,6 +1859,10 @@ OpeningTab:CreateToggle({
 											elseif selectedOpenerType == "Treasure Chest" and name:find("treasureChest") then
 												isMatch = true
 											elseif selectedOpenerType == "Dungeon Chest" and name:find("dungeonChest") then
+												isMatch = true
+											elseif selectedOpenerType == "Serpent Egg" and name:find("serpentEgg") then
+												isMatch = true
+											elseif selectedOpenerType == "Dragon Egg" and name:find("dragonEgg") then
 												isMatch = true
 											end
 											
@@ -1924,7 +1938,7 @@ OpeningTab:CreateToggle({
 						if islands then
 							local detected = false
 							local con = islands.DescendantAdded:Connect(function(desc)
-								if (desc.Name:find("cauldron") or desc.Name:find("treasureChest") or desc.Name:find("dungeonChest")) then
+								if (desc.Name:find("cauldron") or desc.Name:find("treasureChest") or desc.Name:find("dungeonChest") or desc.Name:find("serpentEgg") or desc.Name:find("dragonEgg")) then
 									detected = true
 								end
 							end)
@@ -2068,7 +2082,7 @@ MiscTab:CreateToggle({
 			local ArrayUtil = require(ArrayUtilModule).ArrayUtil
 			local BlockUtils = require(BlockUtilsModule).BlockUtils
 
-			local OVERRIDE_RADIUS = 13
+			local OVERRIDE_RADIUS = 10
 			local OVERRIDE_LIMIT = 100
 
 			SickleUtils.SickleUtils.getNearbyBlocks = function(position, config)
@@ -2218,6 +2232,43 @@ MiscTab:CreateToggle({
 		if hc then
 			hc.Value = Value
 		end
+	end,
+})
+
+local ExtraSection = MiscTab:CreateSection("Extra")
+
+local inviteUsername = ""
+MiscTab:CreateInput({
+	Name = "Player Username",
+	CurrentValue = "",
+	PlaceholderText = "Username",
+	RemoveTextAfterFocusLost = false,
+	Flag = "InvitePlayerInput",
+	Callback = function(Text)
+		inviteUsername = Text
+	end,
+})
+
+MiscTab:CreateButton({
+	Name = "Invite Player",
+	Callback = function()
+		if inviteUsername == "" then return end
+		task.spawn(function()
+			local success, userId = pcall(function()
+				return Players:GetUserIdFromNameAsync(inviteUsername)
+			end)
+			
+			if success and userId then
+				local CLIENT_INVITE = RS.rbxts_include.node_modules["@rbxts"].net.out._NetManaged:WaitForChild("client_request_8")
+				CLIENT_INVITE:InvokeServer({
+					userId = userId,
+					name = inviteUsername
+				})
+				Rayfield:Notify({Title = "Invite Sent", Content = "Invited " .. inviteUsername, Duration = 3, Image = 11401835376})
+			else
+				Rayfield:Notify({Title = "Invite Failed", Content = "Could not find user: " .. inviteUsername, Duration = 3, Image = 11401835376})
+			end
+		end)
 	end,
 })
 
