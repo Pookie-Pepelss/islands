@@ -1249,7 +1249,7 @@ local PriceInput = VendingTab:CreateInput({
 })
 
 local SetPriceButton = VendingTab:CreateButton({
-	Name = "Set Price For Vending Machines (Radius)",
+	Name = "Set Price/Mode (Radius)",
 	Callback = function()
 		local amount = parseAmount(PriceInputValue)
 		setPriceInRadius(amount)
