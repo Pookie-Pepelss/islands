@@ -778,25 +778,29 @@ local function depositItemsInRadius(itemName, amount, showNotif, loopGen)
 		local vendingRef = entry.v
 		local depositAmount = entry.depositAmount
 		local existingAmount = entry.existingAmount
-		local toolRef = Backpack:FindFirstChild(itemName)
-		if not toolRef and LP.Character then
-			toolRef = LP.Character:FindFirstChild(itemName)
-		end
-		if not toolRef then break end
+
 		local guid = HS:GenerateGUID(false)
 		active = active + 1
 		task.spawn(function()
-			VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
-			VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
-			task.wait(0.001)
-			task.wait(0.001)
+			local toolRef = Backpack:FindFirstChild(itemName) or (LP.Character and LP.Character:FindFirstChild(itemName))
+			if toolRef then
+				VENDING_OPEN:FireServer(guid, {{vendingMachine = vendingRef}})
+				VENDING_EDIT:FireServer(guid, {{vendingMachine = vendingRef}})
+				task.wait(0.001)
+				task.wait(0.001)
 
-			fireVendingSession(guid, vendingRef, "deposit", {
-				tool = toolRef,
-				amount = depositAmount,
-			})
+				if not toolRef.Parent then
+					toolRef = Backpack:FindFirstChild(itemName) or (LP.Character and LP.Character:FindFirstChild(itemName))
+				end
 
-			closeVendingSession(vendingRef)
+				if toolRef then
+					fireVendingSession(guid, vendingRef, "deposit", {
+						tool = toolRef,
+						amount = depositAmount,
+					})
+				end
+				closeVendingSession(vendingRef)
+			end
 			active = active - 1
 		end)
 	end
