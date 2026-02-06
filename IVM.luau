@@ -25,34 +25,6 @@ if _G.VendingManagerCleanup then
 	pcall(_G.VendingManagerCleanup)
 end
 
-task.spawn(function()
-	pcall(function()
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local TS = ReplicatedStorage:WaitForChild("TS", 10)
-		if not TS then return end
-
-		local BlockMetaModule = TS:WaitForChild("block"):WaitForChild("block-meta")
-		if not BlockMetaModule then return end
-
-		local BlockMeta = require(BlockMetaModule).BlockMeta
-		if not BlockMeta then return end
-
-		if BlockMeta["cactus"] then
-			BlockMeta["cactus"].placeOnSoil = false
-			BlockMeta["cactus"].lockPlacedOn = nil
-		end
-
-		for blockName, meta in pairs(BlockMeta) do
-			if blockName ~= "cactus" and meta and meta.logicTags and table.find(meta.logicTags, "crop-logic") then
-				meta.placeOnSoil = true
-				if meta.lockPlacedOn then
-					meta.lockPlacedOn = nil
-				end
-			end
-		end
-	end)
-end)
-
 local isExecComp = true
 local requiredFuncs = {"hookfunction", "hookmetamethod", "newcclosure", "getrawmetatable", "setreadonly"}
 
